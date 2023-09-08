@@ -1,7 +1,7 @@
 use monolith::App;
 use monolith::Repository;
 use monolith::RepositoryMethod;
-use monolith::TCPListener;
+use monolith::TcpTransport;
 
 /* TODO
  * Configuration: environment, toml, json, yaml and ron.
@@ -11,18 +11,14 @@ use monolith::TCPListener;
  * Adapter layer: postgres.
  */
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Hardcode configuration for now.
     let port = 8080;
-    let workers: usize = 5;
-    let db_connection_string = "user:pass@host:port?ssl=true";
-
-    let repository = Repository::new(RepositoryMethod::Postgres(String::from(
-        db_connection_string,
-    )));
+    let repository = Repository::new(RepositoryMethod::InMemory);
 
     let app = App::new(repository);
 
-    let tcp_listener = TCPListener::new(workers, app);
-    tcp_listener.listen(port);
+    let tcp_listener = TcpTransport::new(app);
+    tcp_listener.listen(port).await
 }
