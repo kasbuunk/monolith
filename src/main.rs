@@ -1,7 +1,7 @@
 use monolith::App;
 use monolith::Repository;
-use monolith::RepositoryMethod;
 use monolith::TcpTransport;
+use sqlx::postgres::PgPoolOptions;
 
 /* TODO
  * Configuration: environment, toml, json, yaml and ron.
@@ -15,7 +15,17 @@ use monolith::TcpTransport;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Hardcode configuration for now.
     let port = 8080;
-    let repository = Repository::new(RepositoryMethod::InMemory);
+    let max_connections = 5;
+    let connection_string = "postgres://postgres:postgres@localhost/test";
+
+    let connection_pool = PgPoolOptions::new()
+        .max_connections(max_connections)
+        .connect(connection_string)
+        .await?;
+
+    let repository = Repository::new(connection_pool);
+
+    repository.migrate().await?;
 
     let app = App::new(repository);
 

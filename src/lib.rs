@@ -1,3 +1,4 @@
+use sqlx::postgres::PgPool;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -42,8 +43,10 @@ impl TcpTransport {
 
                     let result = parse_request(buffer_str);
                     match result {
-                        Ok(Request::Register(email, password)) => app.register(email, password),
-                        Ok(Request::LogIn(email, password)) => app.log_in(email, password),
+                        Ok(Request::Register(email, password)) => {
+                            app.register(email, password).await
+                        }
+                        Ok(Request::LogIn(email, password)) => app.log_in(email, password).await,
                         Err(e) => {
                             eprintln!("failed to parse request: {:?}", e);
                             return;
@@ -92,7 +95,7 @@ fn parse_request(message: &str) -> Result<Request, ParseError> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, sqlx::FromRow)]
 struct User {
     email: String,
     password: String,
@@ -105,51 +108,48 @@ impl User {
 }
 
 #[derive(Clone)]
-pub enum RepositoryMethod {
-    InMemory,
-    FileSystem,
-    Postgres(String),
-}
-
-#[derive(Clone)]
 pub struct Repository {
-    method: RepositoryMethod,
+    conn: PgPool,
 }
 
 impl Repository {
-    pub fn new(method: RepositoryMethod) -> Repository {
-        Repository { method }
+    pub fn new(conn: PgPool) -> Repository {
+        Repository { conn }
     }
 
-    fn user_get(&self, email: String) -> User {
-        match self.method {
-            RepositoryMethod::InMemory => {
-                // Pretend to retrieve from database.
-                let user_from_db = User {
-                    email,
-                    password: String::from("password"),
-                };
+    pub async fn migrate(&self) -> Result<(), sqlx::Error> {
+        let table_users = "
+            CREATE TABLE IF NOT EXISTS 
+            users (
+                email VARCHAR(255) UNIQUE PRIMARY KEY, 
+                password VARCHAR(255) NOT NULL
+            );";
 
-                println!("user retrieved: {:?}", user_from_db);
+        let query_result = sqlx::query(table_users).execute(&self.conn).await?;
 
-                user_from_db
-            }
-            _ => User {
-                email: String::from("refactor to error"),
-                password: String::from(""),
-            },
-        }
+        println!("migration successful: {:?}", query_result);
+
+        Ok(())
     }
 
-    fn user_create(&self, user: User) -> User {
-        let created_user = User {
-            email: user.email,
-            password: user.password,
-        };
+    async fn user_get(&self, email: String) -> Result<User, sqlx::Error> {
+        let user = sqlx::query_as!(User, "SELECT * FROM users WHERE email = $1;", email)
+            .fetch_one(&self.conn)
+            .await?;
 
-        println!("user created: {:?}", created_user);
+        println!("{:?}", user);
+        Ok(user)
+    }
 
-        created_user
+    async fn user_create(&self, user: User) -> Result<User, sqlx::Error> {
+        let result = sqlx::query("INSERT INTO users (email, password) VALUES ($1, $2);")
+            .bind(&user.email)
+            .bind(&user.password)
+            .execute(&self.conn)
+            .await?;
+
+        println!("{:?}", result);
+        Ok(user)
     }
 }
 
@@ -163,12 +163,13 @@ impl App {
         App { repository }
     }
 
-    fn register(&self, email: String, password: String) {
+    async fn register(&self, email: String, password: String) {
         let user = User::new(email, password);
-        let _saved_user = self.repository.user_create(user);
+        let _saved_user = self.repository.user_create(user).await;
+        println!("{:?}", _saved_user);
     }
 
-    fn log_in(&self, email: String, _password: String) {
-        let _user = self.repository.user_get(email);
+    async fn log_in(&self, email: String, _password: String) {
+        let _user = self.repository.user_get(email).await;
     }
 }
