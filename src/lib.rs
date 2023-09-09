@@ -1,6 +1,7 @@
 use sqlx::postgres::PgPool;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use uuid::Uuid;
 
 pub struct TcpTransport {
     app: App,
@@ -97,13 +98,18 @@ fn parse_request(message: &str) -> Result<Request, ParseError> {
 
 #[derive(Debug, sqlx::FromRow)]
 struct User {
+    id: Uuid,
     email: String,
-    password: String,
+    password_hash: String,
 }
 
 impl User {
-    fn new(email: String, password: String) -> User {
-        User { email, password }
+    fn new(email: String, password_hash: String) -> Self {
+        User {
+            id: Uuid::new_v4(),
+            email,
+            password_hash,
+        }
     }
 }
 
@@ -118,38 +124,73 @@ impl Repository {
     }
 
     pub async fn migrate(&self) -> Result<(), sqlx::Error> {
+        let uuid_extension = "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";";
+
         let table_users = "
             CREATE TABLE IF NOT EXISTS 
             users (
-                email VARCHAR(255) UNIQUE PRIMARY KEY, 
-                password VARCHAR(255) NOT NULL
+                id UUID PRIMARY KEY,
+                email VARCHAR(255) UNIQUE NOT NULL, 
+                password_hash VARCHAR(255) NOT NULL
             );";
 
-        let query_result = sqlx::query(table_users).execute(&self.conn).await?;
+        let query_result = sqlx::query(uuid_extension).execute(&self.conn).await?;
+        println!("migration successful: {:?}", query_result);
 
+        let query_result = sqlx::query(table_users).execute(&self.conn).await?;
         println!("migration successful: {:?}", query_result);
 
         Ok(())
     }
 
     async fn user_get(&self, email: String) -> Result<User, sqlx::Error> {
-        let user = sqlx::query_as!(User, "SELECT * FROM users WHERE email = $1;", email)
-            .fetch_one(&self.conn)
-            .await?;
+        let user = sqlx::query_as!(
+            User,
+            "SELECT id, email, password_hash FROM users WHERE email = $1;",
+            email
+        )
+        .fetch_one(&self.conn)
+        .await?;
 
         println!("{:?}", user);
         Ok(user)
     }
 
     async fn user_create(&self, user: User) -> Result<User, sqlx::Error> {
-        let result = sqlx::query("INSERT INTO users (email, password) VALUES ($1, $2);")
-            .bind(&user.email)
-            .bind(&user.password)
-            .execute(&self.conn)
-            .await?;
+        let result = sqlx::query!(
+            "INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3);",
+            user.id,
+            &user.email,
+            &user.password_hash,
+        )
+        .execute(&self.conn)
+        .await?;
 
         println!("{:?}", result);
         Ok(user)
+    }
+
+    async fn user_update(&self, user: User) -> Result<(), sqlx::Error> {
+        let user = sqlx::query_as!(
+            User,
+            "UPDATE users SET password_hash = $1 WHERE email = $2;",
+            user.password_hash,
+            user.email
+        )
+        .execute(&self.conn)
+        .await?;
+
+        println!("{:?}", user);
+        Ok(())
+    }
+
+    async fn user_delete(&self, user: User) -> Result<(), sqlx::Error> {
+        let user = sqlx::query_as!(User, "DELETE FROM users WHERE email = $1;", user.email)
+            .execute(&self.conn)
+            .await?;
+
+        println!("{:?}", user);
+        Ok(())
     }
 }
 
