@@ -68,8 +68,8 @@ async fn handle_request(
     let result = parse_request(buffer)?;
 
     match result {
-        Request::Register(email, password) => {
-            let user_result = app.register(email, password).await?;
+        Request::Register(email, first_name, password) => {
+            let user_result = app.register(email, first_name, password).await?;
             println!("user registered: {:?}", user_result);
         }
         Request::LogIn(email, password) => {
@@ -83,7 +83,7 @@ async fn handle_request(
 }
 
 enum Request {
-    Register(String, String),
+    Register(String, String, String),
     LogIn(String, String),
 }
 
@@ -108,9 +108,10 @@ impl std::error::Error for ParseError {}
 fn parse_request(message: &str) -> Result<Request, ParseError> {
     let mut msg = message.trim().split_whitespace();
     match msg.next() {
-        Some("Register") => match (msg.next(), msg.next(), msg.next()) {
-            (Some(email), Some(password), None) => Ok(Request::Register(
+        Some("Register") => match (msg.next(), msg.next(), msg.next(), msg.next()) {
+            (Some(email), Some(first_name), Some(password), None) => Ok(Request::Register(
                 String::from(email),
+                String::from(first_name),
                 String::from(password),
             )),
             _ => Err(ParseError::Register),
@@ -129,14 +130,16 @@ fn parse_request(message: &str) -> Result<Request, ParseError> {
 struct User {
     id: Uuid,
     email: String,
+    first_name: String,
     password_hash: String,
 }
 
 impl User {
-    fn new(email: String, password_hash: String) -> Self {
+    fn new(email: String, first_name: String, password_hash: String) -> Self {
         User {
             id: Uuid::new_v4(),
             email,
+            first_name,
             password_hash,
         }
     }
@@ -160,6 +163,7 @@ impl Repository {
             users (
                 id UUID PRIMARY KEY,
                 email VARCHAR(255) UNIQUE NOT NULL, 
+                first_name VARCHAR(255) NOT NULL,
                 password_hash VARCHAR(255) NOT NULL
             );";
 
@@ -175,7 +179,7 @@ impl Repository {
     async fn user_get(&self, email: String) -> Result<User, sqlx::Error> {
         let user = sqlx::query_as!(
             User,
-            "SELECT id, email, password_hash FROM users WHERE email = $1;",
+            "SELECT id, email, first_name, password_hash FROM users WHERE email = $1;",
             email
         )
         .fetch_one(&self.conn)
@@ -187,9 +191,10 @@ impl Repository {
 
     async fn user_create(&self, user: User) -> Result<User, sqlx::Error> {
         let result = sqlx::query!(
-            "INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3);",
+            "INSERT INTO users (id, email, first_name, password_hash) VALUES ($1, $2, $3, $4);",
             user.id,
             &user.email,
+            &user.first_name,
             &user.password_hash,
         )
         .execute(&self.conn)
@@ -260,10 +265,11 @@ impl App {
     async fn register(
         &self,
         email: String,
+        first_name: String,
         password: String,
     ) -> Result<User, Box<dyn std::error::Error>> {
         let password_hash = hash(password, DEFAULT_COST)?;
-        let user = User::new(email, password_hash);
+        let user = User::new(email, first_name, password_hash);
         let _saved_user = self.repository.user_create(user).await?;
         println!("{:?}", _saved_user);
         Ok(_saved_user)
