@@ -76,6 +76,10 @@ async fn handle_request(
             let token = app.log_in(email, password).await?;
             println!("logged in, token: {:?}", token);
         }
+        Request::ChangeFirstName(token, first_name) => {
+            app.change_first_name(&token, first_name).await?;
+            println!("logged in, token: {:?}", token);
+        }
     }
 
     socket.write_all("acknowlegdment".as_bytes()).await?;
@@ -85,12 +89,14 @@ async fn handle_request(
 enum Request {
     Register(String, String, String),
     LogIn(String, String),
+    ChangeFirstName(String, String),
 }
 
 #[derive(Debug)]
 enum ParseError {
     EndpointUnmatched,
     LogIn,
+    ChangeFirstName,
     Register,
 }
 impl std::fmt::Display for ParseError {
@@ -98,6 +104,7 @@ impl std::fmt::Display for ParseError {
         match self {
             ParseError::Register => write!(f, "Parsing register request"),
             ParseError::LogIn => write!(f, "Parsing login request"),
+            ParseError::ChangeFirstName => write!(f, "Parsing change first name request"),
             ParseError::EndpointUnmatched => write!(f, "Could not find endpoint"),
         }
     }
@@ -121,6 +128,13 @@ fn parse_request(message: &str) -> Result<Request, ParseError> {
                 Ok(Request::LogIn(String::from(email), String::from(password)))
             }
             _ => Err(ParseError::LogIn),
+        },
+        Some("ChangeFirstName") => match (msg.next(), msg.next(), msg.next()) {
+            (Some(token), Some(first_name), None) => Ok(Request::ChangeFirstName(
+                String::from(token),
+                String::from(first_name),
+            )),
+            _ => Err(ParseError::ChangeFirstName),
         },
         _ => Err(ParseError::EndpointUnmatched),
     }
@@ -204,10 +218,11 @@ impl Repository {
         Ok(user)
     }
 
-    async fn user_update(&self, user: User) -> Result<(), sqlx::Error> {
+    async fn user_update(&self, user: &User) -> Result<(), sqlx::Error> {
         let user = sqlx::query_as!(
             User,
-            "UPDATE users SET password_hash = $1 WHERE email = $2;",
+            "UPDATE users SET first_name = $1, password_hash = $2 WHERE email = $3;",
+            user.first_name,
             user.password_hash,
             user.email
         )
@@ -290,9 +305,28 @@ impl App {
         Ok(token)
     }
 
+    async fn change_first_name(
+        &self,
+        token: &str,
+        name: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let claims: BTreeMap<String, String> = self.verify_claims(token)?;
+        let subject = String::from("sub");
+        let email = claims.get(&subject).unwrap();
+        let mut user = self.repository.user_get(String::from(email)).await?;
+        user.first_name = name;
+
+        self.repository.user_update(&user).await?;
+        Ok(())
+    }
+
     fn verify_claims(&self, token: &str) -> Result<BTreeMap<String, String>, jwt::Error> {
         let claims: BTreeMap<String, String> = token.verify_with_key(&self.signing_key)?;
         Ok(claims)
+    }
+
+    fn user_owns_claims(&self, user: &User, claims: &BTreeMap<String, String>) -> bool {
+        user.email == claims["sub"]
     }
 }
 
