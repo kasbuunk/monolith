@@ -1,6 +1,7 @@
+use bcrypt::{hash, verify, DEFAULT_COST};
 use sqlx::postgres::PgPool;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
 
 pub struct TcpTransport {
@@ -42,26 +43,36 @@ impl TcpTransport {
                         }
                     };
 
-                    let result = parse_request(buffer_str);
-                    match result {
-                        Ok(Request::Register(email, password)) => {
-                            app.register(email, password).await
-                        }
-                        Ok(Request::LogIn(email, password)) => app.log_in(email, password).await,
-                        Err(e) => {
-                            eprintln!("failed to parse request: {:?}", e);
-                            return;
-                        }
-                    };
-
-                    if let Err(e) = socket.write_all("acknowledgment".as_bytes()).await {
-                        eprintln!("failed to write to socket; err = {:?}", e);
+                    if let Err(e) = handle_request(buffer_str, &app, &mut socket).await {
+                        eprintln!("Request handling error: {:?}", e);
                         return;
                     }
                 }
             });
         }
     }
+}
+
+async fn handle_request(
+    buffer: &str,
+    app: &App,
+    socket: &mut TcpStream,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let result = parse_request(buffer)?;
+
+    match result {
+        Request::Register(email, password) => {
+            let user_result = app.register(email, password).await?;
+            println!("user registered: {:?}", user_result);
+        }
+        Request::LogIn(email, password) => {
+            let user_result = app.log_in(email, password).await?;
+            println!("user logged in: {:?}", user_result);
+        }
+    }
+
+    socket.write_all("acknowlegdment".as_bytes()).await?;
+    Ok(())
 }
 
 enum Request {
@@ -75,6 +86,17 @@ enum ParseError {
     LogIn,
     Register,
 }
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ParseError::Register => write!(f, "Parsing register request"),
+            ParseError::LogIn => write!(f, "Parsing login request"),
+            ParseError::EndpointUnmatched => write!(f, "Could not find endpoint"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 fn parse_request(message: &str) -> Result<Request, ParseError> {
     let mut msg = message.trim().split_whitespace();
@@ -194,6 +216,21 @@ impl Repository {
     }
 }
 
+#[derive(Debug)]
+enum AuthError {
+    IncorrectPassword,
+}
+
+impl std::fmt::Display for AuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            AuthError::IncorrectPassword => write!(f, "Incorrect password"),
+        }
+    }
+}
+
+impl std::error::Error for AuthError {}
+
 #[derive(Clone)]
 pub struct App {
     repository: Repository,
@@ -204,13 +241,27 @@ impl App {
         App { repository }
     }
 
-    async fn register(&self, email: String, password: String) {
-        let user = User::new(email, password);
-        let _saved_user = self.repository.user_create(user).await;
+    async fn register(
+        &self,
+        email: String,
+        password: String,
+    ) -> Result<User, Box<dyn std::error::Error>> {
+        let password_hash = hash(password, DEFAULT_COST)?;
+        let user = User::new(email, password_hash);
+        let _saved_user = self.repository.user_create(user).await?;
         println!("{:?}", _saved_user);
+        Ok(_saved_user)
     }
 
-    async fn log_in(&self, email: String, _password: String) {
-        let _user = self.repository.user_get(email).await;
+    async fn log_in(
+        &self,
+        email: String,
+        password: String,
+    ) -> Result<User, Box<dyn std::error::Error>> {
+        let _user = self.repository.user_get(email).await?;
+        if verify(&password, &_user.password_hash)? {
+            return Ok(_user);
+        }
+        Err(Box::new(AuthError::IncorrectPassword))
     }
 }
