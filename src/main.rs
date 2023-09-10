@@ -2,6 +2,7 @@ use monolith::App;
 use monolith::Repository;
 use monolith::TcpTransport;
 use sqlx::postgres::PgPoolOptions;
+use std::sync::Arc;
 
 /* TODO
  * Configuration: environment, toml, json, yaml and ron.
@@ -27,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     repository.migrate().await?;
 
-    let app = App::new(repository);
+    let app = Arc::new(App::new(repository));
 
     let tcp_listener = TcpTransport::new(app);
     tcp_listener.listen(port).await

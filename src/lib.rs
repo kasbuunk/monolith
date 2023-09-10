@@ -1,15 +1,16 @@
 use bcrypt::{hash, verify, DEFAULT_COST};
 use sqlx::postgres::PgPool;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
 
 pub struct TcpTransport {
-    app: App,
+    app: Arc<App>,
 }
 
 impl TcpTransport {
-    pub fn new(app: App) -> TcpTransport {
+    pub fn new(app: Arc<App>) -> TcpTransport {
         TcpTransport { app }
     }
 
@@ -20,32 +21,33 @@ impl TcpTransport {
         loop {
             let (mut socket, _) = listener.accept().await?;
 
-            let app = self.app.clone();
+            tokio::spawn({
+                let app = Arc::clone(&self.app);
+                async move {
+                    let mut buf = [0; 1024];
 
-            tokio::spawn(async move {
-                let mut buf = [0; 1024];
+                    loop {
+                        let n = match socket.read(&mut buf).await {
+                            Ok(n) if n == 0 => return,
+                            Ok(n) => n,
+                            Err(e) => {
+                                eprintln!("failed to read from socket; err = {:?}", e);
+                                return;
+                            }
+                        };
 
-                loop {
-                    let n = match socket.read(&mut buf).await {
-                        Ok(n) if n == 0 => return,
-                        Ok(n) => n,
-                        Err(e) => {
-                            eprintln!("failed to read from socket; err = {:?}", e);
+                        let buffer_str = match std::str::from_utf8(&buf[..n]) {
+                            Ok(s) => s,
+                            Err(err) => {
+                                eprintln!("Error converting buffer to string: {}", err);
+                                return;
+                            }
+                        };
+
+                        if let Err(e) = handle_request(buffer_str, app.clone(), &mut socket).await {
+                            eprintln!("Request handling error: {:?}", e);
                             return;
                         }
-                    };
-
-                    let buffer_str = match std::str::from_utf8(&buf[..n]) {
-                        Ok(s) => s,
-                        Err(err) => {
-                            eprintln!("Error converting buffer to string: {}", err);
-                            return;
-                        }
-                    };
-
-                    if let Err(e) = handle_request(buffer_str, &app, &mut socket).await {
-                        eprintln!("Request handling error: {:?}", e);
-                        return;
                     }
                 }
             });
@@ -55,7 +57,7 @@ impl TcpTransport {
 
 async fn handle_request(
     buffer: &str,
-    app: &App,
+    app: Arc<App>,
     socket: &mut TcpStream,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let result = parse_request(buffer)?;
