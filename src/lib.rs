@@ -1,5 +1,9 @@
 use bcrypt::{hash, verify, DEFAULT_COST};
+use hmac::{Hmac, Mac};
+use jwt::SignWithKey;
+use sha2::Sha256;
 use sqlx::postgres::PgPool;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -68,8 +72,8 @@ async fn handle_request(
             println!("user registered: {:?}", user_result);
         }
         Request::LogIn(email, password) => {
-            let user_result = app.log_in(email, password).await?;
-            println!("user logged in: {:?}", user_result);
+            let token = app.log_in(email, password).await?;
+            println!("logged in, token: {:?}", token);
         }
     }
 
@@ -259,11 +263,24 @@ impl App {
         &self,
         email: String,
         password: String,
-    ) -> Result<User, Box<dyn std::error::Error>> {
-        let _user = self.repository.user_get(email).await?;
-        if verify(&password, &_user.password_hash)? {
-            return Ok(_user);
-        }
-        Err(Box::new(AuthError::IncorrectPassword))
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let user = self.repository.user_get(email).await?;
+        if !verify(&password, &user.password_hash)? {
+            return Err(Box::new(AuthError::IncorrectPassword));
+        };
+
+        let token = sign_jwt(&user, b"secret")?;
+        Ok(token)
     }
+}
+
+fn sign_jwt(user: &User, secret: &[u8]) -> Result<String, jwt::Error> {
+    let key: Hmac<Sha256> = Hmac::new_from_slice(secret)?;
+    let mut claims = BTreeMap::new();
+
+    claims.insert("sub", &user.email);
+
+    let token_str = claims.sign_with_key(&key)?;
+
+    Ok(token_str)
 }
