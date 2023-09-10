@@ -1,6 +1,7 @@
 use bcrypt::{hash, verify, DEFAULT_COST};
 use hmac::{Hmac, Mac};
 use jwt::SignWithKey;
+use jwt::VerifyWithKey;
 use sha2::Sha256;
 use sqlx::postgres::PgPool;
 use std::collections::BTreeMap;
@@ -240,11 +241,20 @@ impl std::error::Error for AuthError {}
 #[derive(Clone)]
 pub struct App {
     repository: Repository,
+    signing_key: Hmac<Sha256>,
 }
 
 impl App {
-    pub fn new(repository: Repository) -> App {
-        App { repository }
+    pub fn new(
+        repository: Repository,
+        signing_secret: &[u8],
+    ) -> Result<App, Box<dyn std::error::Error>> {
+        let key = Hmac::new_from_slice(signing_secret)?;
+
+        Ok(App {
+            repository,
+            signing_key: key,
+        })
     }
 
     async fn register(
@@ -269,18 +279,23 @@ impl App {
             return Err(Box::new(AuthError::IncorrectPassword));
         };
 
-        let token = sign_jwt(&user, b"secret")?;
+        let token = sign_jwt(&user, &self.signing_key)?;
+        self.verify_claims(&token)?;
         Ok(token)
+    }
+
+    fn verify_claims(&self, token: &str) -> Result<BTreeMap<String, String>, jwt::Error> {
+        let claims: BTreeMap<String, String> = token.verify_with_key(&self.signing_key)?;
+        Ok(claims)
     }
 }
 
-fn sign_jwt(user: &User, secret: &[u8]) -> Result<String, jwt::Error> {
-    let key: Hmac<Sha256> = Hmac::new_from_slice(secret)?;
+fn sign_jwt(user: &User, key: &Hmac<Sha256>) -> Result<String, jwt::Error> {
     let mut claims = BTreeMap::new();
 
     claims.insert("sub", &user.email);
 
-    let token_str = claims.sign_with_key(&key)?;
+    let token_str = claims.sign_with_key(key)?;
 
     Ok(token_str)
 }

@@ -28,7 +28,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     repository.migrate().await?;
 
-    let app = Arc::new(App::new(repository));
+    let signing_secret = b"secret";
+    let app = Arc::new(App::new(repository, signing_secret)?);
 
     let tcp_listener = TcpTransport::new(app);
     tcp_listener.listen(port).await
