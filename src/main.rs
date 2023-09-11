@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(connection_string)
         .await?;
 
-    let repository = Repository::new(connection_pool);
+    let repository = Arc::new(Repository::new(connection_pool));
 
     repository.migrate().await?;
 

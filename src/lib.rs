@@ -260,13 +260,13 @@ impl std::error::Error for AuthError {}
 
 #[derive(Clone)]
 pub struct App {
-    repository: Repository,
+    repository: Arc<Repository>,
     signing_key: Hmac<Sha256>,
 }
 
 impl App {
     pub fn new(
-        repository: Repository,
+        repository: Arc<Repository>,
         signing_secret: &[u8],
     ) -> Result<App, Box<dyn std::error::Error>> {
         let key = Hmac::new_from_slice(signing_secret)?;
