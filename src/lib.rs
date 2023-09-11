@@ -169,22 +169,7 @@ impl Repository {
     }
 
     pub async fn migrate(&self) -> Result<(), sqlx::Error> {
-        let uuid_extension = "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";";
-
-        let table_users = "
-            CREATE TABLE IF NOT EXISTS 
-            users (
-                id UUID PRIMARY KEY,
-                email VARCHAR(255) UNIQUE NOT NULL, 
-                first_name VARCHAR(255) NOT NULL,
-                password_hash VARCHAR(255) NOT NULL
-            );";
-
-        let query_result = sqlx::query(uuid_extension).execute(&self.conn).await?;
-        println!("migration successful: {:?}", query_result);
-
-        let query_result = sqlx::query(table_users).execute(&self.conn).await?;
-        println!("migration successful: {:?}", query_result);
+        sqlx::migrate!().run(&self.conn).await?;
 
         Ok(())
     }
