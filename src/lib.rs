@@ -159,7 +159,6 @@ impl User {
     }
 }
 
-#[derive(Clone)]
 pub struct Repository {
     conn: PgPool,
 }
@@ -258,7 +257,6 @@ impl std::fmt::Display for AuthError {
 
 impl std::error::Error for AuthError {}
 
-#[derive(Clone)]
 pub struct App {
     repository: Arc<Repository>,
     signing_key: Hmac<Sha256>,
