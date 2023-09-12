@@ -80,6 +80,11 @@ async fn handle_request(
             app.change_first_name(&token, first_name).await?;
             println!("logged in, token: {:?}", token);
         }
+        Request::DeleteUser(id) => {
+            let user_id = uuid::Uuid::parse_str(&id)?;
+            app.user_delete(user_id).await?;
+            println!("user deleted: {}", &id);
+        }
     }
 
     socket.write_all("acknowledgment".as_bytes()).await?;
@@ -92,14 +97,16 @@ enum Request {
     Register(String, String, String),
     LogIn(String, String),
     ChangeFirstName(String, String),
+    DeleteUser(String),
 }
 
 #[derive(Debug)]
 enum ParseError {
     EndpointUnmatched,
+    Register,
     LogIn,
     ChangeFirstName,
-    Register,
+    DeleteUser,
 }
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -107,6 +114,7 @@ impl std::fmt::Display for ParseError {
             ParseError::Register => write!(f, "Parsing register request"),
             ParseError::LogIn => write!(f, "Parsing login request"),
             ParseError::ChangeFirstName => write!(f, "Parsing change first name request"),
+            ParseError::DeleteUser => write!(f, "Parsing delete user request"),
             ParseError::EndpointUnmatched => write!(f, "Could not find endpoint"),
         }
     }
@@ -137,6 +145,10 @@ fn parse_request(message: &str) -> Result<Request, ParseError> {
                 String::from(first_name),
             )),
             _ => Err(ParseError::ChangeFirstName),
+        },
+        Some("DeleteUser") => match (msg.next(), msg.next()) {
+            (Some(id), None) => Ok(Request::DeleteUser(String::from(id))),
+            _ => Err(ParseError::DeleteUser),
         },
         _ => Err(ParseError::EndpointUnmatched),
     }
@@ -219,12 +231,12 @@ impl Repository {
         Ok(())
     }
 
-    async fn user_delete(&self, user: User) -> Result<(), sqlx::Error> {
-        let user = sqlx::query_as!(User, "DELETE FROM users WHERE email = $1;", user.email)
+    async fn user_delete(&self, id: &Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query_as!(User, "DELETE FROM users WHERE id = $1;", id)
             .execute(&self.conn)
             .await?;
 
-        println!("{:?}", user);
+        println!("user deleted: {:?}", id);
         Ok(())
     }
 }
@@ -290,6 +302,12 @@ impl App {
         Ok(token)
     }
 
+    async fn user_delete(&self, id: uuid::Uuid) -> Result<(), Box<dyn std::error::Error>> {
+        self.repository.user_delete(&id).await?;
+
+        Ok(())
+    }
+
     async fn change_first_name(
         &self,
         token: &str,
@@ -308,10 +326,6 @@ impl App {
     fn verify_claims(&self, token: &str) -> Result<BTreeMap<String, String>, jwt::Error> {
         let claims: BTreeMap<String, String> = token.verify_with_key(&self.signing_key)?;
         Ok(claims)
-    }
-
-    fn user_owns_claims(&self, user: &User, claims: &BTreeMap<String, String>) -> bool {
-        user.email == claims["sub"]
     }
 }
 
