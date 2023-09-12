@@ -69,25 +69,35 @@ async fn handle_request(
 
     match result {
         Request::Register(email, first_name, password) => {
-            let user_result = app.register(email, first_name, password).await?;
-            println!("user registered: {:?}", user_result);
+            let user = app.register(email, first_name, password).await?;
+            println!("user registered: {:?}", user);
+
+            socket.write_all(user.id.as_bytes()).await?;
         }
         Request::LogIn(email, password) => {
             let token = app.log_in(email, password).await?;
-            println!("logged in, token: {:?}", token);
+            println!("user logged in, token: {:?}", token);
+
+            socket.write_all(&token.as_bytes()).await?;
         }
         Request::ChangeFirstName(token, first_name) => {
             app.change_first_name(&token, first_name).await?;
-            println!("logged in, token: {:?}", token);
+            println!("changed user's name, token: {:?}", token);
+
+            socket.write_all("acknowledgment".as_bytes()).await?;
         }
-        Request::DeleteUser(id) => {
+        Request::DeleteUser(token, id) => {
             let user_id = uuid::Uuid::parse_str(&id)?;
-            app.user_delete(user_id).await?;
+            app.user_delete(&token, user_id).await?;
             println!("user deleted: {}", &id);
+
+            socket.write_all("acknowledgment".as_bytes()).await?;
         }
     }
 
-    socket.write_all("acknowledgment".as_bytes()).await?;
+    // For all currently defined messages, a response is sufficient.
+    // If more back-and-forth messaging is required, the socket may
+    // be reused for such endpoints.
     socket.shutdown().await?;
 
     Ok(())
@@ -97,7 +107,7 @@ enum Request {
     Register(String, String, String),
     LogIn(String, String),
     ChangeFirstName(String, String),
-    DeleteUser(String),
+    DeleteUser(String, String),
 }
 
 #[derive(Debug)]
@@ -146,8 +156,10 @@ fn parse_request(message: &str) -> Result<Request, ParseError> {
             )),
             _ => Err(ParseError::ChangeFirstName),
         },
-        Some("DeleteUser") => match (msg.next(), msg.next()) {
-            (Some(id), None) => Ok(Request::DeleteUser(String::from(id))),
+        Some("DeleteUser") => match (msg.next(), msg.next(), msg.next()) {
+            (Some(token), Some(id), None) => {
+                Ok(Request::DeleteUser(String::from(token), String::from(id)))
+            }
             _ => Err(ParseError::DeleteUser),
         },
         _ => Err(ParseError::EndpointUnmatched),
@@ -188,7 +200,20 @@ impl Repository {
         Ok(())
     }
 
-    async fn user_get(&self, email: String) -> Result<User, sqlx::Error> {
+    async fn user_get(&self, id: &Uuid) -> Result<User, sqlx::Error> {
+        let user = sqlx::query_as!(
+            User,
+            "SELECT id, email, first_name, password_hash FROM users WHERE id = $1;",
+            id
+        )
+        .fetch_one(&self.conn)
+        .await?;
+
+        println!("{:?}", user);
+        Ok(user)
+    }
+
+    async fn user_get_by_email(&self, email: &str) -> Result<User, sqlx::Error> {
         let user = sqlx::query_as!(
             User,
             "SELECT id, email, first_name, password_hash FROM users WHERE email = $1;",
@@ -219,10 +244,10 @@ impl Repository {
     async fn user_update(&self, user: &User) -> Result<(), sqlx::Error> {
         let user = sqlx::query_as!(
             User,
-            "UPDATE users SET first_name = $1, password_hash = $2 WHERE email = $3;",
+            "UPDATE users SET first_name = $1, password_hash = $2 WHERE id = $3;",
             user.first_name,
             user.password_hash,
-            user.email
+            user.id
         )
         .execute(&self.conn)
         .await?;
@@ -292,7 +317,7 @@ impl App {
         email: String,
         password: String,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let user = self.repository.user_get(email).await?;
+        let user = self.repository.user_get_by_email(&email).await?;
         if !verify(&password, &user.password_hash)? {
             return Err(Box::new(AuthError::IncorrectPassword));
         };
@@ -302,7 +327,16 @@ impl App {
         Ok(token)
     }
 
-    async fn user_delete(&self, id: uuid::Uuid) -> Result<(), Box<dyn std::error::Error>> {
+    async fn user_delete(
+        &self,
+        token: &str,
+        id: uuid::Uuid,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let claims: BTreeMap<String, String> = self.verify_claims(token)?;
+        if !user_owns_token(&id, &claims) {
+            println!("claims: {:?}", claims["sub"]);
+            return Err("user with id {:?} does not own the token".into());
+        }
         self.repository.user_delete(&id).await?;
 
         Ok(())
@@ -315,8 +349,8 @@ impl App {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let claims: BTreeMap<String, String> = self.verify_claims(token)?;
         let subject = String::from("sub");
-        let email = claims.get(&subject).unwrap();
-        let mut user = self.repository.user_get(String::from(email)).await?;
+        let user_id = Uuid::parse_str(claims.get(&subject).unwrap())?;
+        let mut user = self.repository.user_get(&user_id).await?;
         user.first_name = name;
 
         self.repository.user_update(&user).await?;
@@ -329,10 +363,14 @@ impl App {
     }
 }
 
+fn user_owns_token(id: &uuid::Uuid, claims: &BTreeMap<String, String>) -> bool {
+    claims["sub"] == id.to_string()
+}
+
 fn sign_jwt(user: &User, key: &Hmac<Sha256>) -> Result<String, jwt::Error> {
     let mut claims = BTreeMap::new();
 
-    claims.insert("sub", &user.email);
+    claims.insert("sub", String::from(&user.id.to_string()));
 
     let token_str = claims.sign_with_key(key)?;
 
