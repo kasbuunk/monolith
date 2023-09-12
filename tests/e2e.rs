@@ -44,7 +44,7 @@ async fn test_tcp_integration() -> Result<(), Box<dyn std::error::Error>> {
         let acknowledgment = send_tcp_message(&address, change_name_request.as_bytes()).await?;
         let acknowledgment_str = String::from_utf8_lossy(&acknowledgment);
 
-        assert_eq!(acknowledgment_str, "acknowledgment");
+        assert_eq!(acknowledgment_str, "ok");
 
         // Delete user
         let delete_request = format!("DeleteUser {} {}", token, user_id.to_string());
@@ -52,7 +52,7 @@ async fn test_tcp_integration() -> Result<(), Box<dyn std::error::Error>> {
         let acknowledgment = send_tcp_message(&address, delete_request.as_bytes()).await?;
         let acknowledgment_str = String::from_utf8_lossy(&acknowledgment);
 
-        assert_eq!(acknowledgment_str, "acknowledgment");
+        assert_eq!(acknowledgment_str, "ok");
     }
 
     Ok(())
