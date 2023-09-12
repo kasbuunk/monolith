@@ -29,7 +29,7 @@ impl TcpTransport {
             tokio::spawn({
                 let app = Arc::clone(&self.app);
                 async move {
-                    let mut buf = [0; 1024];
+                    let mut buf = vec![0; 1024];
 
                     loop {
                         let n = match socket.read(&mut buf).await {
@@ -82,7 +82,9 @@ async fn handle_request(
         }
     }
 
-    socket.write_all("acknowlegdment".as_bytes()).await?;
+    socket.write_all("acknowledgment".as_bytes()).await?;
+    socket.shutdown().await?;
+
     Ok(())
 }
 
