@@ -17,12 +17,20 @@ async fn test_tcp_integration() -> Result<(), Box<dyn std::error::Error>> {
     let host = "127.0.0.1";
     let address = format!("{}:{}", host, port);
 
-    let test_cases: Vec<TestCase> = vec![TestCase {
-        email: String::from("john@example.com"),
-        password: String::from("myPassw0rd!"),
-        first_name: String::from("John"),
-        changed_first_name: String::from("Jane"),
-    }];
+    let test_cases: Vec<TestCase> = vec![
+        TestCase {
+            email: String::from("john@example.com"),
+            password: String::from("thisPassw0rd!"),
+            first_name: String::from("John"),
+            changed_first_name: String::from("Jane"),
+        },
+        TestCase {
+            email: String::from("will@example.com"),
+            password: String::from("thatPassw0rd!"),
+            first_name: String::from("Will"),
+            changed_first_name: String::from("Wilma"),
+        },
+    ];
 
     for test_case in test_cases {
         // Register

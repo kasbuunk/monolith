@@ -51,7 +51,6 @@ pub async fn connect_to_database(
         "postgres://{}:{}@{}/{}",
         config.user, config.password, config.host, config.name
     );
-    // let connection_string = "postgres://postgres:postgres@localhost/test";
 
     let connection_pool = PgPoolOptions::new().connect(&connection_string).await?;
     return Ok(connection_pool);
