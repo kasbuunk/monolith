@@ -14,6 +14,10 @@ Prerequisites:
 # Creates the dev database provided at $DATABASE_URL in `.env`.
 sqlx database create 
 
+# Copy the sample files and replace accordingly.
+cp sample.env .env
+cp sample.ron config.ron
+
 # Compile and run the application.
 cargo run
 
