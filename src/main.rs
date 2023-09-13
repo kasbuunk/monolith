@@ -1,7 +1,8 @@
+use monolith::connect_to_database;
+use monolith::load_config_from_file;
 use monolith::App;
 use monolith::Repository;
 use monolith::TcpTransport;
-use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 
 /* TODO
@@ -14,15 +15,10 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Hardcode configuration for now.
-    let port = 8080;
-    let max_connections = 5;
-    let connection_string = "postgres://postgres:postgres@localhost/test";
+    let config_file_path = "config.ron";
+    let config = load_config_from_file(config_file_path)?;
 
-    let connection_pool = PgPoolOptions::new()
-        .max_connections(max_connections)
-        .connect(connection_string)
-        .await?;
+    let connection_pool = connect_to_database(config.database).await?;
 
     let repository = Arc::new(Repository::new(connection_pool));
 
@@ -32,5 +28,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Arc::new(App::new(repository, signing_secret)?);
 
     let tcp_listener = TcpTransport::new(app);
-    tcp_listener.listen(port).await
+    tcp_listener.listen(config.tcp.port).await
 }

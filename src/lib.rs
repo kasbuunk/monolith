@@ -2,14 +2,60 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 use hmac::{Hmac, Mac};
 use jwt::SignWithKey;
 use jwt::VerifyWithKey;
+use serde::Deserialize;
 use sha2::Sha256;
 use sqlx::postgres::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::Read;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
 
+#[derive(Debug, Deserialize)]
+pub struct Config {
+    pub tcp: TcpConfig,
+    pub database: DatabaseConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TcpConfig {
+    pub port: u16,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DatabaseConfig {
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub password: String,
+    pub ssl: bool,
+}
+
+pub fn load_config_from_file(file_path: &str) -> Result<Config, Box<dyn std::error::Error>> {
+    let mut file = File::open(file_path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+
+    let config: Config = ron::de::from_str(&contents)?;
+    Ok(config)
+}
+
+pub async fn connect_to_database(
+    config: DatabaseConfig,
+) -> Result<PgPool, Box<dyn std::error::Error>> {
+    let connection_string = format!(
+        "postgres://{}:{}@{}/{}",
+        config.user, config.password, config.host, config.name
+    );
+    // let connection_string = "postgres://postgres:postgres@localhost/test";
+
+    let connection_pool = PgPoolOptions::new().connect(&connection_string).await?;
+    return Ok(connection_pool);
+}
 pub struct TcpTransport {
     app: Arc<App>,
 }
@@ -84,14 +130,14 @@ async fn handle_request(
             app.change_first_name(&token, first_name).await?;
             println!("changed user's name, token: {:?}", token);
 
-            socket.write_all("acknowledgment".as_bytes()).await?;
+            socket.write_all("ok".as_bytes()).await?;
         }
         Request::DeleteUser(token, id) => {
             let user_id = uuid::Uuid::parse_str(&id)?;
             app.user_delete(&token, user_id).await?;
             println!("user deleted: {}", &id);
 
-            socket.write_all("acknowledgment".as_bytes()).await?;
+            socket.write_all("ok".as_bytes()).await?;
         }
     }
 
