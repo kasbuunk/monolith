@@ -5,14 +5,6 @@ use monolith::Repository;
 use monolith::TcpTransport;
 use std::sync::Arc;
 
-/* TODO
- * Configuration: environment, toml, json, yaml and ron.
- * Transports: tcp, http, grpc, graphql.
- * Serialisation: binary, json, ron, protobuf.
- * Domain layer.
- * Adapter layer: postgres.
- */
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_file_path = "config.ron";

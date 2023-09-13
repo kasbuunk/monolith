@@ -2,7 +2,7 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 use hmac::{Hmac, Mac};
 use jwt::SignWithKey;
 use jwt::VerifyWithKey;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sqlx::postgres::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -56,6 +56,7 @@ pub async fn connect_to_database(
     let connection_pool = PgPoolOptions::new().connect(&connection_string).await?;
     return Ok(connection_pool);
 }
+
 pub struct TcpTransport {
     app: Arc<App>,
 }
@@ -107,13 +108,13 @@ impl TcpTransport {
 }
 
 async fn handle_request(
-    buffer: &str,
+    message: &str,
     app: Arc<App>,
     socket: &mut TcpStream,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let result = parse_request(buffer)?;
+    let request = parse_request_ron(message)?;
 
-    match result {
+    match request {
         Request::Register(email, first_name, password) => {
             let user = app.register(email, first_name, password).await?;
             println!("user registered: {:?}", user);
@@ -149,15 +150,57 @@ async fn handle_request(
     Ok(())
 }
 
-enum Request {
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Request {
     Register(String, String, String),
     LogIn(String, String),
     ChangeFirstName(String, String),
     DeleteUser(String, String),
 }
 
+impl Request {
+    pub fn custom_whitespace_deserialize(message: &str) -> Result<Self, ParseError> {
+        let mut msg = message.trim().split_whitespace();
+        match msg.next() {
+            Some("Register") => match (msg.next(), msg.next(), msg.next(), msg.next()) {
+                (Some(email), Some(first_name), Some(password), None) => Ok(Request::Register(
+                    String::from(email),
+                    String::from(first_name),
+                    String::from(password),
+                )),
+                _ => Err(ParseError::Register),
+            },
+            Some("LogIn") => match (msg.next(), msg.next(), msg.next()) {
+                (Some(email), Some(password), None) => {
+                    Ok(Request::LogIn(String::from(email), String::from(password)))
+                }
+                _ => Err(ParseError::LogIn),
+            },
+            Some("ChangeFirstName") => match (msg.next(), msg.next(), msg.next()) {
+                (Some(token), Some(first_name), None) => Ok(Request::ChangeFirstName(
+                    String::from(token),
+                    String::from(first_name),
+                )),
+                _ => Err(ParseError::ChangeFirstName),
+            },
+            Some("DeleteUser") => match (msg.next(), msg.next(), msg.next()) {
+                (Some(token), Some(id), None) => {
+                    Ok(Request::DeleteUser(String::from(token), String::from(id)))
+                }
+                _ => Err(ParseError::DeleteUser),
+            },
+            _ => Err(ParseError::EndpointUnmatched),
+        }
+    }
+}
+
+fn parse_request_ron(message: &str) -> Result<Request, ron::Error> {
+    let request: Request = ron::de::from_str(&message)?;
+    Ok(request)
+}
+
 #[derive(Debug)]
-enum ParseError {
+pub enum ParseError {
     EndpointUnmatched,
     Register,
     LogIn,
@@ -177,40 +220,6 @@ impl std::fmt::Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
-
-fn parse_request(message: &str) -> Result<Request, ParseError> {
-    let mut msg = message.trim().split_whitespace();
-    match msg.next() {
-        Some("Register") => match (msg.next(), msg.next(), msg.next(), msg.next()) {
-            (Some(email), Some(first_name), Some(password), None) => Ok(Request::Register(
-                String::from(email),
-                String::from(first_name),
-                String::from(password),
-            )),
-            _ => Err(ParseError::Register),
-        },
-        Some("LogIn") => match (msg.next(), msg.next(), msg.next()) {
-            (Some(email), Some(password), None) => {
-                Ok(Request::LogIn(String::from(email), String::from(password)))
-            }
-            _ => Err(ParseError::LogIn),
-        },
-        Some("ChangeFirstName") => match (msg.next(), msg.next(), msg.next()) {
-            (Some(token), Some(first_name), None) => Ok(Request::ChangeFirstName(
-                String::from(token),
-                String::from(first_name),
-            )),
-            _ => Err(ParseError::ChangeFirstName),
-        },
-        Some("DeleteUser") => match (msg.next(), msg.next(), msg.next()) {
-            (Some(token), Some(id), None) => {
-                Ok(Request::DeleteUser(String::from(token), String::from(id)))
-            }
-            _ => Err(ParseError::DeleteUser),
-        },
-        _ => Err(ParseError::EndpointUnmatched),
-    }
-}
 
 #[derive(Debug, sqlx::FromRow)]
 struct User {

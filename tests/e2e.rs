@@ -1,3 +1,5 @@
+use monolith::Request;
+use ron;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use uuid::Uuid;
@@ -24,32 +26,39 @@ async fn test_tcp_integration() -> Result<(), Box<dyn std::error::Error>> {
 
     for test_case in test_cases {
         // Register
-        let register_request = format!(
-            "Register {} {} {}",
-            &test_case.email, &test_case.first_name, &test_case.password,
+        let register_request = Request::Register(
+            test_case.email.clone(),
+            test_case.first_name,
+            test_case.password.clone(),
         );
-        let register_response = send_tcp_message(&address, register_request.as_bytes()).await?;
+        let request_serialised = ron::ser::to_string(&register_request)?;
+
+        let register_response = send_tcp_message(&address, request_serialised.as_bytes()).await?;
         let mut uuid_bytes: [u8; 16] = Default::default();
         uuid_bytes.copy_from_slice(&register_response);
         let user_id = Uuid::from_bytes(uuid_bytes);
 
         // Log in
-        let login_request = format!("LogIn {} {}", &test_case.email, &test_case.password);
-        let token_vec = send_tcp_message(&address, login_request.as_bytes()).await?;
+        let login_request = Request::LogIn(test_case.email, test_case.password);
+        let login_request_serialised = ron::ser::to_string(&login_request)?;
+        let token_vec = send_tcp_message(&address, login_request_serialised.as_bytes()).await?;
         let token = String::from_utf8_lossy(&token_vec);
 
         // Change first name
-        let change_name_request =
-            format!("ChangeFirstName {} {}", token, test_case.changed_first_name);
-        let acknowledgment = send_tcp_message(&address, change_name_request.as_bytes()).await?;
+        let change_first_name_request =
+            Request::ChangeFirstName(token.to_string(), test_case.changed_first_name);
+        let change_first_name_request_serialised = ron::ser::to_string(&change_first_name_request)?;
+        let acknowledgment =
+            send_tcp_message(&address, change_first_name_request_serialised.as_bytes()).await?;
         let acknowledgment_str = String::from_utf8_lossy(&acknowledgment);
 
         assert_eq!(acknowledgment_str, "ok");
 
         // Delete user
-        let delete_request = format!("DeleteUser {} {}", token, user_id.to_string());
-        println!("Delete request: {}", &delete_request);
-        let acknowledgment = send_tcp_message(&address, delete_request.as_bytes()).await?;
+        let delete_request = Request::DeleteUser(token.to_string(), user_id.to_string());
+        let delete_request_serialised = ron::ser::to_string(&delete_request)?;
+        let acknowledgment =
+            send_tcp_message(&address, delete_request_serialised.as_bytes()).await?;
         let acknowledgment_str = String::from_utf8_lossy(&acknowledgment);
 
         assert_eq!(acknowledgment_str, "ok");
