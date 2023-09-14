@@ -113,33 +113,32 @@ async fn handle_request(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let request = parse_request_ron(message)?;
 
-    match request {
+    let response = match request {
         Request::Register(email, first_name, password) => {
             let user = app.register(email, first_name, password).await?;
             println!("user registered: {:?}", user);
-
-            socket.write_all(user.id.as_bytes()).await?;
+            Response::UserID(user.id.to_string())
         }
         Request::LogIn(email, password) => {
             let token = app.log_in(email, password).await?;
             println!("user logged in, token: {:?}", token);
-
-            socket.write_all(&token.as_bytes()).await?;
+            Response::Token(token.clone())
         }
         Request::ChangeFirstName(token, first_name) => {
             app.change_first_name(&token, first_name).await?;
             println!("changed user's name, token: {:?}", token);
-
-            socket.write_all("ok".as_bytes()).await?;
+            Response::Acknowledgment
         }
         Request::DeleteUser(token, id) => {
             let user_id = uuid::Uuid::parse_str(&id)?;
             app.user_delete(&token, user_id).await?;
             println!("user deleted: {}", &id);
-
-            socket.write_all("ok".as_bytes()).await?;
+            Response::Acknowledgment
         }
-    }
+    };
+
+    let response_serialised = ron::ser::to_string(&response)?;
+    socket.write_all(response_serialised.as_bytes()).await?;
 
     // For all currently defined messages, a response is sufficient.
     // If more back-and-forth messaging is required, the socket may
@@ -147,6 +146,40 @@ async fn handle_request(
     socket.shutdown().await?;
 
     Ok(())
+}
+
+pub async fn do_request(
+    address: &str,
+    request: Request,
+) -> Result<Response, Box<dyn std::error::Error>> {
+    let request_serialised = ron::ser::to_string(&request)?;
+    let response_serialised = send_tcp_message(address, request_serialised.as_bytes()).await?;
+    let response = ron::de::from_bytes(&response_serialised)?;
+
+    Ok(response)
+}
+
+async fn send_tcp_message(
+    address: &str,
+    message: &[u8],
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // Establish a connection to the application's TCP server.
+    let mut stream = TcpStream::connect(address).await?;
+    // Send a request to the server.
+    stream.write_all(message).await?;
+
+    // Read the response from the server.
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await?;
+
+    Ok(response)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Response {
+    Acknowledgment,
+    Token(String),
+    UserID(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
