@@ -1,7 +1,4 @@
-use monolith::do_request;
-use monolith::{Request, Response};
-use std::str::FromStr;
-use uuid::Uuid;
+use monolith::*;
 
 struct TestCase {
     email: String,
@@ -15,6 +12,8 @@ async fn test_tcp_integration() -> Result<(), Box<dyn std::error::Error>> {
     let port = 8080;
     let host = "127.0.0.1";
     let address = format!("{}:{}", host, port);
+
+    let mut client = TcpClient::new(address.clone()).await?;
 
     let test_cases: Vec<TestCase> = vec![
         TestCase {
@@ -33,42 +32,33 @@ async fn test_tcp_integration() -> Result<(), Box<dyn std::error::Error>> {
 
     for test_case in test_cases {
         // Register
-        let register_request = Request::Register(
-            test_case.email.clone(),
-            test_case.first_name,
-            test_case.password.clone(),
-        );
-
-        let register_response = do_request(&address, register_request).await?;
-        let user_id = match register_response {
-            Response::UserID(id_string) => Uuid::from_str(&id_string)?,
-            _ => return Err("unexpected response type doing register request".into()),
+        let register_req = RegisterRequest {
+            email: test_case.email.clone(),
+            password: test_case.password.clone(),
+            first_name: test_case.first_name.clone(),
         };
+        let user_id_response = client.register(register_req).await?;
 
         // Log in
-        let login_request = Request::LogIn(test_case.email, test_case.password);
-        let login_response = do_request(&address, login_request).await?;
-        let token = match login_response {
-            Response::Token(token) => token,
-            _ => return Err("unexpected response type doing login request".into()),
+        let login_request = LogInRequest {
+            email: test_case.email,
+            password: test_case.password,
         };
+        let token_response = client.log_in(login_request).await?;
 
         // Change first name
-        let change_first_name_request =
-            Request::ChangeFirstName(token.to_string(), test_case.changed_first_name);
-        let change_first_name_response = do_request(&address, change_first_name_request).await?;
-        match change_first_name_response {
-            Response::Acknowledgment => (),
-            _ => return Err("unexpected response type doing change first name request".into()),
-        }
+        let change_first_name_request = ChangeFirstNameRequest {
+            token: token_response.token.to_string(),
+            first_name: test_case.changed_first_name,
+        };
+        client.change_first_name(change_first_name_request).await?;
 
         // Delete user
-        let delete_user_request = Request::DeleteUser(token.to_string(), user_id.to_string());
-        let delete_user_response = do_request(&address, delete_user_request).await?;
-        match delete_user_response {
-            Response::Acknowledgment => (),
-            _ => return Err("unexpected response type doing delete user request".into()),
-        }
+        let delete_user_request = DeleteUserRequest {
+            token: token_response.token.to_string(),
+            id: user_id_response.user_id.to_string(),
+        };
+        client.delete_user(delete_user_request).await?;
     }
 
     Ok(())

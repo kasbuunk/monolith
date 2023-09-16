@@ -2,6 +2,7 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 use hmac::{Hmac, Mac};
 use jwt::SignWithKey;
 use jwt::VerifyWithKey;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sqlx::postgres::PgPool;
@@ -99,6 +100,14 @@ impl TcpTransport {
                             eprintln!("Request handling error: {:?}", e);
                             return;
                         }
+
+                        // For all currently defined messages, a response is sufficient.
+                        // If more back-and-forth messaging is required, the socket may
+                        // be reused for such endpoints.
+                        if let Err(e) = socket.shutdown().await {
+                            eprintln!("Error shutting down socket: {:?}", e);
+                            return;
+                        }
                     }
                 }
             });
@@ -111,147 +120,188 @@ async fn handle_request(
     app: Arc<App>,
     socket: &mut TcpStream,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let request = parse_request_ron(message)?;
+    let request = ron::de::from_str(&message)?;
 
-    let response = match request {
-        Request::Register(email, first_name, password) => {
-            let user = app.register(email, first_name, password).await?;
-            println!("user registered: {:?}", user);
-            Response::UserID(user.id.to_string())
+    let response_serialised = match request {
+        Request::Register(request) => {
+            let user = app
+                .register(request.email, request.first_name, request.password)
+                .await?;
+
+            println!("user registered: {:?}", &user);
+
+            let response = UserIDResponse {
+                user_id: user.id.to_string(),
+            };
+
+            ron::ser::to_string(&response)?
         }
-        Request::LogIn(email, password) => {
-            let token = app.log_in(email, password).await?;
-            println!("user logged in, token: {:?}", token);
-            Response::Token(token.clone())
+        Request::LogIn(request) => {
+            let token = app.log_in(request.email, request.password).await?;
+
+            println!("user logged in, token: {:?}", &token);
+
+            let response = TokenResponse { token };
+            ron::ser::to_string(&response)?
         }
-        Request::ChangeFirstName(token, first_name) => {
-            app.change_first_name(&token, first_name).await?;
-            println!("changed user's name, token: {:?}", token);
-            Response::Acknowledgment
+        Request::ChangeFirstName(request) => {
+            app.change_first_name(&request.token, request.first_name)
+                .await?;
+
+            println!("changed user's name, token: {:?}", request.token);
+
+            let response = AcknowledgmentResponse {};
+            ron::ser::to_string(&response)?
         }
-        Request::DeleteUser(token, id) => {
-            let user_id = uuid::Uuid::parse_str(&id)?;
-            app.user_delete(&token, user_id).await?;
-            println!("user deleted: {}", &id);
-            Response::Acknowledgment
+        Request::DeleteUser(request) => {
+            let user_id = uuid::Uuid::parse_str(&request.id)?;
+
+            app.user_delete(&request.token, user_id).await?;
+
+            println!("user deleted: {}", &request.id);
+
+            let response = AcknowledgmentResponse {};
+            ron::ser::to_string(&response)?
         }
     };
 
-    let response_serialised = ron::ser::to_string(&response)?;
     socket.write_all(response_serialised.as_bytes()).await?;
-
-    // For all currently defined messages, a response is sufficient.
-    // If more back-and-forth messaging is required, the socket may
-    // be reused for such endpoints.
-    socket.shutdown().await?;
 
     Ok(())
 }
 
-pub async fn do_request(
-    address: &str,
-    request: Request,
-) -> Result<Response, Box<dyn std::error::Error>> {
-    let request_serialised = ron::ser::to_string(&request)?;
-    let response_serialised = send_tcp_message(address, request_serialised.as_bytes()).await?;
-    let response = ron::de::from_bytes(&response_serialised)?;
-
-    Ok(response)
-}
-
-async fn send_tcp_message(
-    address: &str,
-    message: &[u8],
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    // Establish a connection to the application's TCP server.
-    let mut stream = TcpStream::connect(address).await?;
-    // Send a request to the server.
-    stream.write_all(message).await?;
-
-    // Read the response from the server.
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response).await?;
-
-    Ok(response)
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum Response {
-    Acknowledgment,
-    Token(String),
-    UserID(String),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub enum Request {
-    Register(String, String, String),
-    LogIn(String, String),
-    ChangeFirstName(String, String),
-    DeleteUser(String, String),
+    Register(RegisterRequest),
+    LogIn(LogInRequest),
+    ChangeFirstName(ChangeFirstNameRequest),
+    DeleteUser(DeleteUserRequest),
 }
 
-impl Request {
-    pub fn custom_whitespace_deserialize(message: &str) -> Result<Self, ParseError> {
-        let mut msg = message.trim().split_whitespace();
-        match msg.next() {
-            Some("Register") => match (msg.next(), msg.next(), msg.next(), msg.next()) {
-                (Some(email), Some(first_name), Some(password), None) => Ok(Request::Register(
-                    String::from(email),
-                    String::from(first_name),
-                    String::from(password),
-                )),
-                _ => Err(ParseError::Register),
-            },
-            Some("LogIn") => match (msg.next(), msg.next(), msg.next()) {
-                (Some(email), Some(password), None) => {
-                    Ok(Request::LogIn(String::from(email), String::from(password)))
-                }
-                _ => Err(ParseError::LogIn),
-            },
-            Some("ChangeFirstName") => match (msg.next(), msg.next(), msg.next()) {
-                (Some(token), Some(first_name), None) => Ok(Request::ChangeFirstName(
-                    String::from(token),
-                    String::from(first_name),
-                )),
-                _ => Err(ParseError::ChangeFirstName),
-            },
-            Some("DeleteUser") => match (msg.next(), msg.next(), msg.next()) {
-                (Some(token), Some(id), None) => {
-                    Ok(Request::DeleteUser(String::from(token), String::from(id)))
-                }
-                _ => Err(ParseError::DeleteUser),
-            },
-            _ => Err(ParseError::EndpointUnmatched),
-        }
+#[derive(Serialize, Deserialize)]
+pub struct RegisterRequest {
+    pub email: String,
+    pub first_name: String,
+    pub password: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LogInRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ChangeFirstNameRequest {
+    pub token: String,
+    pub first_name: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DeleteUserRequest {
+    pub token: String,
+    pub id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct UserIDResponse {
+    pub user_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TokenResponse {
+    pub token: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct AcknowledgmentResponse {}
+
+pub struct TcpClient {
+    address: String,
+}
+
+impl TcpClient {
+    pub async fn new(address: String) -> Result<Self, std::io::Error> {
+        Ok(Self { address })
+    }
+
+    pub async fn do_request<'a, T, U>(
+        &'a mut self,
+        request: T,
+    ) -> Result<U, Box<dyn std::error::Error>>
+    where
+        T: Serialize,
+        U: DeserializeOwned,
+    {
+        let response_serialised = self.send_serialised(request).await?;
+        let response: U = ron::de::from_bytes(&response_serialised)?;
+
+        Ok(response)
+    }
+
+    async fn send_serialised<T>(
+        &mut self,
+        request: T,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>>
+    where
+        T: Serialize,
+    {
+        let request_serialised = ron::ser::to_string(&request)?;
+        println!("request_serialised: {}", request_serialised);
+        let response_serialised = self
+            .exchange_messages(request_serialised.as_bytes())
+            .await?;
+
+        println!(
+            "response_serialised: {}",
+            String::from_utf8(response_serialised.clone())?,
+        );
+
+        Ok(response_serialised)
+    }
+
+    async fn exchange_messages(
+        &mut self,
+        message: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let mut stream = TcpStream::connect(self.address.clone()).await?;
+        // Send a request to the server.
+        stream.write_all(message).await?;
+
+        // Read the response from the server.
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await?;
+
+        stream.shutdown().await?;
+
+        Ok(response)
+    }
+
+    pub async fn register(
+        &mut self,
+        request: RegisterRequest,
+    ) -> Result<UserIDResponse, Box<dyn std::error::Error>> {
+        Ok(self.do_request(Request::Register(request)).await?)
+    }
+    pub async fn log_in(
+        &mut self,
+        request: LogInRequest,
+    ) -> Result<TokenResponse, Box<dyn std::error::Error>> {
+        Ok(self.do_request(Request::LogIn(request)).await?)
+    }
+    pub async fn change_first_name(
+        &mut self,
+        request: ChangeFirstNameRequest,
+    ) -> Result<AcknowledgmentResponse, Box<dyn std::error::Error>> {
+        Ok(self.do_request(Request::ChangeFirstName(request)).await?)
+    }
+    pub async fn delete_user(
+        &mut self,
+        request: DeleteUserRequest,
+    ) -> Result<AcknowledgmentResponse, Box<dyn std::error::Error>> {
+        Ok(self.do_request(Request::DeleteUser(request)).await?)
     }
 }
-
-fn parse_request_ron(message: &str) -> Result<Request, ron::Error> {
-    let request: Request = ron::de::from_str(&message)?;
-    Ok(request)
-}
-
-#[derive(Debug)]
-pub enum ParseError {
-    EndpointUnmatched,
-    Register,
-    LogIn,
-    ChangeFirstName,
-    DeleteUser,
-}
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            ParseError::Register => write!(f, "Parsing register request"),
-            ParseError::LogIn => write!(f, "Parsing login request"),
-            ParseError::ChangeFirstName => write!(f, "Parsing change first name request"),
-            ParseError::DeleteUser => write!(f, "Parsing delete user request"),
-            ParseError::EndpointUnmatched => write!(f, "Could not find endpoint"),
-        }
-    }
-}
-
-impl std::error::Error for ParseError {}
 
 #[derive(Debug, sqlx::FromRow)]
 struct User {
@@ -422,7 +472,7 @@ impl App {
         let claims: BTreeMap<String, String> = self.verify_claims(token)?;
         if !user_owns_token(&id, &claims) {
             println!("claims: {:?}", claims["sub"]);
-            return Err("user with id {:?} does not own the token".into());
+            return Err(format!("user with id {:?} does not own the token", &id).into());
         }
         self.repository.user_delete(&id).await?;
 
