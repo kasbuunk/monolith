@@ -1,9 +1,9 @@
-use log::{debug, info, warn};
-use monolith::connect_to_database;
-use monolith::load_config_from_file;
-use monolith::App;
-use monolith::Repo;
-use monolith::TcpTransport;
+use log::info;
+use monolith::app::App;
+use monolith::config::load_config_from_file;
+use monolith::database::connect_to_database;
+use monolith::repository::Repo;
+use monolith::tcp::TcpTransport;
 use std::sync::Arc;
 
 #[tokio::main]
