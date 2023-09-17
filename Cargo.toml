@@ -13,3 +13,4 @@ jwt = "0.16.0"
 sha2 = "0.10.7"
 ron = "0.8.1"
 serde = {version = "1.0.188", features=["derive"]}
+async-trait = "0.1.73"

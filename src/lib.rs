@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use bcrypt::{hash, verify, DEFAULT_COST};
 use hmac::{Hmac, Mac};
 use jwt::SignWithKey;
@@ -57,16 +58,24 @@ pub async fn connect_to_database(
     return Ok(connection_pool);
 }
 
+#[async_trait]
+pub trait Transport {
+    async fn listen(&self, port: u16) -> Result<(), Box<dyn std::error::Error>>;
+}
+
 pub struct TcpTransport {
     app: Arc<App>,
 }
 
 impl TcpTransport {
-    pub fn new(app: Arc<App>) -> TcpTransport {
-        TcpTransport { app }
+    pub fn new(app: Arc<App>) -> Box<dyn Transport> {
+        Box::new(TcpTransport { app })
     }
+}
 
-    pub async fn listen(&self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+#[async_trait]
+impl Transport for TcpTransport {
+    async fn listen(&self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
         let address = format!("127.0.0.1:{}", port);
         let listener = TcpListener::bind(address).await?;
 
