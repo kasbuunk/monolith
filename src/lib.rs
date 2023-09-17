@@ -64,7 +64,7 @@ pub trait Transport {
 }
 
 pub struct TcpTransport {
-    app: Arc<App>,
+    app: Arc<dyn Application>,
 }
 
 impl TcpTransport {
@@ -126,7 +126,7 @@ impl Transport for TcpTransport {
 
 async fn handle_request(
     message: &str,
-    app: Arc<App>,
+    app: Arc<dyn Application>,
     socket: &mut TcpStream,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let request = ron::de::from_str(&message)?;
@@ -313,7 +313,7 @@ impl TcpClient {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct User {
+pub struct User {
     id: Uuid,
     email: String,
     first_name: String,
@@ -427,6 +427,32 @@ impl std::fmt::Display for AuthError {
 
 impl std::error::Error for AuthError {}
 
+#[async_trait]
+pub trait Application: Send + Sync {
+    async fn register(
+        &self,
+        email: String,
+        first_name: String,
+        password: String,
+    ) -> Result<User, Box<dyn std::error::Error>>;
+    async fn log_in(
+        &self,
+        email: String,
+        password: String,
+    ) -> Result<String, Box<dyn std::error::Error>>;
+    async fn user_delete(
+        &self,
+        token: &str,
+        id: uuid::Uuid,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+    async fn change_first_name(
+        &self,
+        token: &str,
+        name: String,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+    fn verify_claims(&self, token: &str) -> Result<BTreeMap<String, String>, jwt::Error>;
+}
+
 pub struct App {
     repository: Arc<Repository>,
     signing_key: Hmac<Sha256>,
@@ -444,7 +470,10 @@ impl App {
             signing_key: key,
         })
     }
+}
 
+#[async_trait]
+impl Application for App {
     async fn register(
         &self,
         email: String,
