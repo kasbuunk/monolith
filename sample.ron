@@ -1,4 +1,5 @@
 (
+    log_level: "info",
     tcp: (
         port: 8080,
     ),

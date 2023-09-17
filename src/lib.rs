@@ -3,6 +3,7 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 use hmac::{Hmac, Mac};
 use jwt::SignWithKey;
 use jwt::VerifyWithKey;
+use log::{debug, error, info, warn};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -18,6 +19,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
+    pub log_level: String,
     pub tcp: TcpConfig,
     pub database: DatabaseConfig,
 }
@@ -54,6 +56,11 @@ pub async fn connect_to_database(
         config.user, config.password, config.host, config.name
     );
 
+    info!(
+        "Connecting to postgres://{}:[redacted]@{}/{}",
+        config.user, config.host, config.name
+    );
+
     let connection_pool = PgPoolOptions::new().connect(&connection_string).await?;
     return Ok(connection_pool);
 }
@@ -77,10 +84,15 @@ impl TcpTransport {
 impl Transport for TcpTransport {
     async fn listen(&self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
         let address = format!("127.0.0.1:{}", port);
+
+        info!("Start listening for incoming messages at {}.", address);
+
         let listener = TcpListener::bind(address).await?;
 
         loop {
             let (mut socket, _) = listener.accept().await?;
+
+            info!("Accepted new message, registered to a new tcp stream.");
 
             tokio::spawn({
                 let app = Arc::clone(&self.app);
@@ -88,11 +100,13 @@ impl Transport for TcpTransport {
                     let mut buf = vec![0; 1024];
 
                     loop {
+                        debug!("Reading from socket to buffer.");
+
                         let n = match socket.read(&mut buf).await {
                             Ok(n) if n == 0 => return,
                             Ok(n) => n,
                             Err(e) => {
-                                eprintln!("failed to read from socket; err = {:?}", e);
+                                error!("Failed to read from socket; err = {:?}", e);
                                 return;
                             }
                         };
@@ -100,21 +114,23 @@ impl Transport for TcpTransport {
                         let buffer_str = match std::str::from_utf8(&buf[..n]) {
                             Ok(s) => s,
                             Err(err) => {
-                                eprintln!("Error converting buffer to string: {}", err);
+                                error!("Error converting buffer to string: {}", err);
                                 return;
                             }
                         };
 
                         if let Err(e) = handle_request(buffer_str, app.clone(), &mut socket).await {
-                            eprintln!("Request handling error: {:?}", e);
+                            error!("Request handling error: {:?}", e);
                             return;
                         }
+
+                        debug!("Shutting down socket.");
 
                         // For all currently defined messages, a response is sufficient.
                         // If more back-and-forth messaging is required, the socket may
                         // be reused for such endpoints.
                         if let Err(e) = socket.shutdown().await {
-                            eprintln!("Error shutting down socket: {:?}", e);
+                            error!("Error shutting down socket: {:?}", e);
                             return;
                         }
                     }
@@ -133,11 +149,13 @@ async fn handle_request(
 
     let response_serialised = match request {
         Request::Register(request) => {
+            info!("Handling incoming register request.");
+
             let user = app
                 .register(request.email, request.first_name, request.password)
                 .await?;
 
-            println!("user registered: {:?}", &user);
+            debug!("Successfully handled the register request.");
 
             let response = UserIDResponse {
                 user_id: user.id.to_string(),
@@ -146,28 +164,34 @@ async fn handle_request(
             ron::ser::to_string(&response)?
         }
         Request::LogIn(request) => {
+            info!("Handling incoming log in request.");
+
             let token = app.log_in(request.email, request.password).await?;
 
-            println!("user logged in, token: {:?}", &token);
+            debug!("Successfully handled the log in request.");
 
             let response = TokenResponse { token };
             ron::ser::to_string(&response)?
         }
         Request::ChangeFirstName(request) => {
+            info!("Handling incoming change first name request.");
+
             app.change_first_name(&request.token, request.first_name)
                 .await?;
 
-            println!("changed user's name, token: {:?}", request.token);
+            debug!("Successfully handled the change first name request.");
 
             let response = AcknowledgmentResponse {};
             ron::ser::to_string(&response)?
         }
         Request::DeleteUser(request) => {
+            info!("Handling incoming delete user request.");
+
             let user_id = uuid::Uuid::parse_str(&request.id)?;
 
             app.user_delete(&request.token, user_id).await?;
 
-            println!("user deleted: {}", &request.id);
+            debug!("Successfully handled the delete user request.");
 
             let response = AcknowledgmentResponse {};
             ron::ser::to_string(&response)?
@@ -231,6 +255,8 @@ pub struct TcpClient {
 
 impl TcpClient {
     pub async fn new(address: String) -> Result<Self, std::io::Error> {
+        debug!("Constructing new tcp client to address: {}.", &address);
+
         Ok(Self { address })
     }
 
@@ -256,12 +282,14 @@ impl TcpClient {
         T: Serialize,
     {
         let request_serialised = ron::ser::to_string(&request)?;
-        println!("request_serialised: {}", request_serialised);
+
+        debug!("request_serialised: {}", request_serialised);
+
         let response_serialised = self
             .exchange_messages(request_serialised.as_bytes())
             .await?;
 
-        println!(
+        debug!(
             "response_serialised: {}",
             String::from_utf8(response_serialised.clone())?,
         );
@@ -274,13 +302,15 @@ impl TcpClient {
         message: &[u8],
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let mut stream = TcpStream::connect(self.address.clone()).await?;
-        // Send a request to the server.
+
+        debug!("Writing the request to the tcp stream.");
         stream.write_all(message).await?;
 
-        // Read the response from the server.
+        debug!("Reading the server's response from the tcp stream.");
         let mut response = Vec::new();
         stream.read_to_end(&mut response).await?;
 
+        debug!("Closing the tcp stream.");
         stream.shutdown().await?;
 
         Ok(response)
@@ -322,8 +352,11 @@ pub struct User {
 
 impl User {
     fn new(email: String, first_name: String, password_hash: String) -> Self {
+        let id = Uuid::new_v4();
+        debug!("Constructing new user with id: {}, email: {}.", &id, &email);
+
         User {
-            id: Uuid::new_v4(),
+            id,
             email,
             first_name,
             password_hash,
@@ -346,10 +379,14 @@ pub struct Repo {
 
 impl Repo {
     pub fn new(conn: PgPool) -> Repo {
+        info!("Constructing new repository.");
+
         Repo { conn }
     }
 
     pub async fn migrate(&self) -> Result<(), sqlx::Error> {
+        info!("Running migrations.");
+
         sqlx::migrate!().run(&self.conn).await?;
 
         Ok(())
@@ -367,7 +404,8 @@ impl Repository for Repo {
         .fetch_one(&self.conn)
         .await?;
 
-        println!("{:?}", user);
+        debug!("Fetched user: {:?}", &user);
+
         Ok(user)
     }
 
@@ -380,7 +418,8 @@ impl Repository for Repo {
         .fetch_one(&self.conn)
         .await?;
 
-        println!("{:?}", user);
+        debug!("Fetched user by email: {:?}", &user);
+
         Ok(user)
     }
 
@@ -395,7 +434,8 @@ impl Repository for Repo {
         .execute(&self.conn)
         .await?;
 
-        println!("{:?}", result);
+        debug!("Inserted user: {:?}, result: {:?}", &user, &result);
+
         Ok(user)
     }
 
@@ -410,7 +450,8 @@ impl Repository for Repo {
         .execute(&self.conn)
         .await?;
 
-        println!("{:?}", user);
+        debug!("Updated user: {:?}", &user);
+
         Ok(())
     }
 
@@ -419,7 +460,8 @@ impl Repository for Repo {
             .execute(&self.conn)
             .await?;
 
-        println!("user deleted: {:?}", id);
+        debug!("User deleted: {:?}", &id);
+
         Ok(())
     }
 }
@@ -427,12 +469,17 @@ impl Repository for Repo {
 #[derive(Debug)]
 enum AuthError {
     IncorrectPassword,
+    UserDoesNotOwnToken,
 }
 
 impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             AuthError::IncorrectPassword => write!(f, "Incorrect password"),
+            AuthError::UserDoesNotOwnToken => write!(
+                f,
+                "The user that owns the token attempts a privileged operation for a different user"
+            ),
         }
     }
 }
@@ -475,6 +522,8 @@ impl App {
         repository: Arc<Repo>,
         signing_secret: &[u8],
     ) -> Result<App, Box<dyn std::error::Error>> {
+        info!("Constructing new app.");
+
         let key = Hmac::new_from_slice(signing_secret)?;
 
         Ok(App {
@@ -492,11 +541,15 @@ impl Application for App {
         first_name: String,
         password: String,
     ) -> Result<User, Box<dyn std::error::Error>> {
+        debug!("Registering user: {}", &email);
+
         let password_hash = hash(password, DEFAULT_COST)?;
         let user = User::new(email, first_name, password_hash);
-        let _saved_user = self.repository.user_create(user).await?;
-        println!("{:?}", _saved_user);
-        Ok(_saved_user)
+        let saved_user = self.repository.user_create(user).await?;
+
+        info!("Registered user: {:?}", &saved_user);
+
+        Ok(saved_user)
     }
 
     async fn log_in(
@@ -504,13 +557,20 @@ impl Application for App {
         email: String,
         password: String,
     ) -> Result<String, Box<dyn std::error::Error>> {
+        debug!("Logging in user: {:?}", &email);
+
         let user = self.repository.user_get_by_email(&email).await?;
         if !verify(&password, &user.password_hash)? {
+            info!("Verification of password failed.");
+
             return Err(Box::new(AuthError::IncorrectPassword));
         };
 
         let token = sign_jwt(&user, &self.signing_key)?;
         self.verify_claims(&token)?;
+
+        info!("Logged in user: {:?}", &user);
+
         Ok(token)
     }
 
@@ -519,12 +579,21 @@ impl Application for App {
         token: &str,
         id: uuid::Uuid,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("Deleting user: {:?}", &id);
+
         let claims: BTreeMap<String, String> = self.verify_claims(token)?;
         if !user_owns_token(&id, &claims) {
-            println!("claims: {:?}", claims["sub"]);
-            return Err(format!("user with id {:?} does not own the token", &id).into());
+            warn!(
+                "User attempts a privileged operation for user_id={:?}, but does not own the provided token, subject: {:?}",
+                &id,
+                &claims["sub"]
+            );
+
+            return Err(Box::new(AuthError::UserDoesNotOwnToken));
         }
         self.repository.user_delete(&id).await?;
+
+        info!("Deleted user with id: {:?}", &id);
 
         Ok(())
     }
@@ -534,6 +603,8 @@ impl Application for App {
         token: &str,
         name: String,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("Changing first name to {}", &name);
+
         let claims: BTreeMap<String, String> = self.verify_claims(token)?;
         let subject = String::from("sub");
         let user_id = Uuid::parse_str(claims.get(&subject).unwrap())?;
@@ -541,6 +612,9 @@ impl Application for App {
         user.first_name = name;
 
         self.repository.user_update(&user).await?;
+
+        debug!("Changed first name of user: {:?}", &user);
+
         Ok(())
     }
 
@@ -555,8 +629,9 @@ fn user_owns_token(id: &uuid::Uuid, claims: &BTreeMap<String, String>) -> bool {
 }
 
 fn sign_jwt(user: &User, key: &Hmac<Sha256>) -> Result<String, jwt::Error> {
-    let mut claims = BTreeMap::new();
+    debug!("Signing JWT for user: {:?}", user);
 
+    let mut claims = BTreeMap::new();
     claims.insert("sub", String::from(&user.id.to_string()));
 
     let token_str = claims.sign_with_key(key)?;
