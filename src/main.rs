@@ -1,7 +1,7 @@
 use monolith::connect_to_database;
 use monolith::load_config_from_file;
 use monolith::App;
-use monolith::Repository;
+use monolith::Repo;
 use monolith::TcpTransport;
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let connection_pool = connect_to_database(config.database).await?;
 
-    let repository = Arc::new(Repository::new(connection_pool));
+    let repository = Arc::new(Repo::new(connection_pool));
 
     repository.migrate().await?;
 

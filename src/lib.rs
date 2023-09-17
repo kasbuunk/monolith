@@ -331,13 +331,22 @@ impl User {
     }
 }
 
-pub struct Repository {
+#[async_trait]
+pub trait Repository: Send + Sync {
+    async fn user_get(&self, id: &Uuid) -> Result<User, sqlx::Error>;
+    async fn user_get_by_email(&self, email: &str) -> Result<User, sqlx::Error>;
+    async fn user_create(&self, user: User) -> Result<User, sqlx::Error>;
+    async fn user_update(&self, user: &User) -> Result<(), sqlx::Error>;
+    async fn user_delete(&self, id: &Uuid) -> Result<(), sqlx::Error>;
+}
+
+pub struct Repo {
     conn: PgPool,
 }
 
-impl Repository {
-    pub fn new(conn: PgPool) -> Repository {
-        Repository { conn }
+impl Repo {
+    pub fn new(conn: PgPool) -> Repo {
+        Repo { conn }
     }
 
     pub async fn migrate(&self) -> Result<(), sqlx::Error> {
@@ -345,7 +354,10 @@ impl Repository {
 
         Ok(())
     }
+}
 
+#[async_trait]
+impl Repository for Repo {
     async fn user_get(&self, id: &Uuid) -> Result<User, sqlx::Error> {
         let user = sqlx::query_as!(
             User,
@@ -454,13 +466,13 @@ pub trait Application: Send + Sync {
 }
 
 pub struct App {
-    repository: Arc<Repository>,
+    repository: Arc<dyn Repository>,
     signing_key: Hmac<Sha256>,
 }
 
 impl App {
     pub fn new(
-        repository: Arc<Repository>,
+        repository: Arc<Repo>,
         signing_secret: &[u8],
     ) -> Result<App, Box<dyn std::error::Error>> {
         let key = Hmac::new_from_slice(signing_secret)?;
