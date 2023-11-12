@@ -5,8 +5,14 @@ use std::io::Read;
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub log_level: String,
-    pub tcp: crate::tcp::TcpConfig,
-    pub database: crate::database::DatabaseConfig,
+    pub transport: Transport,
+    pub database: crate::database::Config,
+}
+
+#[derive(Debug, Deserialize)]
+pub enum Transport {
+    Tcp(crate::tcp::Config),
+    Http(crate::http::Config),
 }
 
 pub fn load_config_from_file(file_path: &str) -> Result<Config, Box<dyn std::error::Error>> {
