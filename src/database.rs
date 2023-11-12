@@ -3,7 +3,7 @@ use serde::Deserialize;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
 #[derive(Debug, Deserialize)]
-pub struct DatabaseConfig {
+pub struct Config {
     pub name: String,
     pub host: String,
     pub port: u16,
@@ -12,9 +12,7 @@ pub struct DatabaseConfig {
     pub ssl: bool,
 }
 
-pub async fn connect_to_database(
-    config: DatabaseConfig,
-) -> Result<PgPool, Box<dyn std::error::Error>> {
+pub async fn connect_to_database(config: Config) -> Result<PgPool, Box<dyn std::error::Error>> {
     let connection_string = format!(
         "postgres://{}:{}@{}/{}",
         config.user, config.password, config.host, config.name

@@ -9,7 +9,8 @@ test: build
 
 .PHONY: stop
 run: build
-	./${BINARY_NAME} &
+	./${BINARY_NAME} tests/tcp.ron &
+	./${BINARY_NAME} tests/http.ron &
 
 .PHONY: stop
 stop:

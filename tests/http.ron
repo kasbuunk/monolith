@@ -1,8 +1,8 @@
 (
     log_level: "debug",
-    transport: Tcp(
+    transport: Http(
         Config(
-            port: 3000,
+            port: 3001,
         ),
     ),
     database: (

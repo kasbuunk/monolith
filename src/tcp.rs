@@ -1,4 +1,5 @@
 use crate::app::*;
+use crate::transport::{Client, Transport};
 use async_trait::async_trait;
 use log::{debug, error, info};
 use serde::de::DeserializeOwned;
@@ -8,28 +9,23 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 #[derive(Debug, Deserialize)]
-pub struct TcpConfig {
+pub struct Config {
     pub port: u16,
 }
 
-#[async_trait]
-pub trait Transport {
-    async fn listen(&self, port: u16) -> Result<(), Box<dyn std::error::Error>>;
-}
-
-pub struct TcpTransport {
+pub struct Listener {
     app: Arc<dyn Application>,
 }
 
-impl TcpTransport {
-    pub fn new(app: Arc<App>) -> Box<dyn Transport> {
-        Box::new(TcpTransport { app })
+impl Listener {
+    pub fn new(app: Arc<App>) -> Listener {
+        Listener { app }
     }
 }
 
 #[async_trait]
-impl Transport for TcpTransport {
-    async fn listen(&self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+impl Transport for Listener {
+    async fn listen(self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
         let address = format!("127.0.0.1:{}", port);
 
         info!("Start listening for incoming messages at {}.", address);
@@ -161,10 +157,7 @@ impl TcpClient {
         Ok(Self { address })
     }
 
-    pub async fn do_request<'a, T, U>(
-        &'a mut self,
-        request: T,
-    ) -> Result<U, Box<dyn std::error::Error>>
+    pub async fn do_request<T, U>(&self, request: T) -> Result<U, Box<dyn std::error::Error>>
     where
         T: Serialize,
         U: DeserializeOwned,
@@ -175,10 +168,7 @@ impl TcpClient {
         Ok(response)
     }
 
-    async fn send_serialised<T>(
-        &mut self,
-        request: T,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error>>
+    async fn send_serialised<T>(&self, request: T) -> Result<Vec<u8>, Box<dyn std::error::Error>>
     where
         T: Serialize,
     {
@@ -199,7 +189,7 @@ impl TcpClient {
     }
 
     async fn exchange_messages(
-        &mut self,
+        &self,
         message: &[u8],
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let mut stream = TcpStream::connect(self.address.clone()).await?;
@@ -216,27 +206,30 @@ impl TcpClient {
 
         Ok(response)
     }
+}
 
-    pub async fn register(
-        &mut self,
+#[async_trait]
+impl Client for TcpClient {
+    async fn register(
+        &self,
         request: RegisterRequest,
     ) -> Result<UserIDResponse, Box<dyn std::error::Error>> {
         Ok(self.do_request(Request::Register(request)).await?)
     }
-    pub async fn log_in(
-        &mut self,
+    async fn log_in(
+        &self,
         request: LogInRequest,
     ) -> Result<TokenResponse, Box<dyn std::error::Error>> {
         Ok(self.do_request(Request::LogIn(request)).await?)
     }
-    pub async fn change_first_name(
-        &mut self,
+    async fn change_first_name(
+        &self,
         request: ChangeFirstNameRequest,
     ) -> Result<AcknowledgmentResponse, Box<dyn std::error::Error>> {
         Ok(self.do_request(Request::ChangeFirstName(request)).await?)
     }
-    pub async fn delete_user(
-        &mut self,
+    async fn delete_user(
+        &self,
         request: DeleteUserRequest,
     ) -> Result<AcknowledgmentResponse, Box<dyn std::error::Error>> {
         Ok(self.do_request(Request::DeleteUser(request)).await?)
