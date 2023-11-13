@@ -44,7 +44,7 @@ impl Repository for Repo {
         .fetch_one(&self.conn)
         .await?;
 
-        debug!("Fetched user: {:?}", &user);
+        debug!("Fetched user: {:?}", &user.id);
 
         Ok(user)
     }
@@ -58,7 +58,7 @@ impl Repository for Repo {
         .fetch_one(&self.conn)
         .await?;
 
-        debug!("Fetched user by email: {:?}", &user);
+        debug!("Fetched user by email: {:?}", &user.id);
 
         Ok(user)
     }
@@ -74,13 +74,13 @@ impl Repository for Repo {
         .execute(&self.conn)
         .await?;
 
-        debug!("Inserted user: {:?}, result: {:?}", &user, &result);
+        debug!("Inserted user: {:?}, result: {:?}", &user.id, &result);
 
         Ok(user)
     }
 
     async fn user_update(&self, user: &User) -> Result<(), sqlx::Error> {
-        let user = sqlx::query_as!(
+        let result = sqlx::query_as!(
             User,
             "UPDATE users SET first_name = $1, password_hash = $2 WHERE id = $3;",
             user.first_name,
@@ -90,7 +90,7 @@ impl Repository for Repo {
         .execute(&self.conn)
         .await?;
 
-        debug!("Updated user: {:?}", &user);
+        debug!("Updated user: {:?}", &result);
 
         Ok(())
     }

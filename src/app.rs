@@ -92,7 +92,7 @@ impl Application for App {
         let user = User::new(email, first_name, password_hash);
         let saved_user = self.repository.user_create(user).await?;
 
-        info!("Registered user: {:?}", &saved_user);
+        info!("Registered user: {:?}", &saved_user.id);
 
         Ok(saved_user)
     }
@@ -114,7 +114,7 @@ impl Application for App {
         let token = sign_jwt(&user, &self.signing_key)?;
         self.verify_claims(&token)?;
 
-        info!("Logged in user: {:?}", &user);
+        info!("Logged in user: {:?}", &user.id);
 
         Ok(token)
     }
@@ -158,7 +158,7 @@ impl Application for App {
 
         self.repository.user_update(&user).await?;
 
-        debug!("Changed first name of user: {:?}", &user);
+        debug!("Changed first name of user: {:?}", &user.id);
 
         Ok(())
     }
@@ -174,7 +174,7 @@ fn user_owns_token(id: &uuid::Uuid, claims: &BTreeMap<String, String>) -> bool {
 }
 
 fn sign_jwt(user: &User, key: &Hmac<Sha256>) -> Result<String, jwt::Error> {
-    debug!("Signing JWT for user: {:?}", user);
+    debug!("Signing JWT for user: {:?}", user.id);
 
     let mut claims = BTreeMap::new();
     claims.insert("sub", String::from(&user.id.to_string()));
