@@ -19,6 +19,24 @@ pub struct Config {
     pub port: u16,
 }
 
+enum ApiEndpoint {
+    Register,
+    LogIn,
+    ChangeFirstName,
+    DeleteUser,
+}
+
+impl ApiEndpoint {
+    fn to_string(&self) -> &'static str {
+        match self {
+            ApiEndpoint::Register => "/register",
+            ApiEndpoint::LogIn => "/login",
+            ApiEndpoint::ChangeFirstName => "/change_first_name",
+            ApiEndpoint::DeleteUser => "/delete_user",
+        }
+    }
+}
+
 pub struct Server {
     router: Router,
 }
@@ -26,10 +44,13 @@ pub struct Server {
 impl Server {
     pub fn new(app: Arc<dyn Application>) -> Server {
         let router = Router::new()
-            .route("/register", post(register))
-            .route("/login", post(login))
-            .route("/change_first_name", post(change_first_name))
-            .route("/delete_user", post(delete_user))
+            .route(ApiEndpoint::Register.to_string(), post(register))
+            .route(ApiEndpoint::LogIn.to_string(), post(login))
+            .route(
+                ApiEndpoint::ChangeFirstName.to_string(),
+                post(change_first_name),
+            )
+            .route(ApiEndpoint::DeleteUser.to_string(), post(delete_user))
             .with_state(app);
 
         Server { router }
@@ -153,9 +174,9 @@ impl HttpClient {
     async fn exchange<T: Serialize, U: DeserializeOwned>(
         &self,
         request: T,
-        endpoint: &str,
+        endpoint: ApiEndpoint,
     ) -> Result<U, Box<dyn std::error::Error>> {
-        let url = reqwest::Url::parse(&format!("{}{}", self.base_url, endpoint))?;
+        let url = reqwest::Url::parse(&format!("{}{}", self.base_url, endpoint.to_string()))?;
 
         let response = self
             .client
@@ -176,28 +197,24 @@ impl Client for HttpClient {
         &self,
         request: RegisterRequest,
     ) -> Result<UserIDResponse, Box<dyn std::error::Error>> {
-        let endpoint = "/register";
-        self.exchange(request, endpoint).await
+        self.exchange(request, ApiEndpoint::Register).await
     }
     async fn log_in(
         &self,
         request: LogInRequest,
     ) -> Result<TokenResponse, Box<dyn std::error::Error>> {
-        let endpoint = "/login";
-        self.exchange(request, endpoint).await
+        self.exchange(request, ApiEndpoint::LogIn).await
     }
     async fn change_first_name(
         &self,
         request: ChangeFirstNameRequest,
     ) -> Result<AcknowledgmentResponse, Box<dyn std::error::Error>> {
-        let endpoint = "/change_first_name";
-        self.exchange(request, endpoint).await
+        self.exchange(request, ApiEndpoint::ChangeFirstName).await
     }
     async fn delete_user(
         &self,
         request: DeleteUserRequest,
     ) -> Result<AcknowledgmentResponse, Box<dyn std::error::Error>> {
-        let endpoint = "/delete_user";
-        self.exchange(request, endpoint).await
+        self.exchange(request, ApiEndpoint::DeleteUser).await
     }
 }
