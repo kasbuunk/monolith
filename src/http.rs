@@ -171,7 +171,7 @@ impl HttpClient {
         Ok(HttpClient { client, base_url })
     }
 
-    async fn exchange<T: Serialize, U: DeserializeOwned>(
+    async fn send_request<T: Serialize, U: DeserializeOwned>(
         &self,
         request: T,
         endpoint: ApiEndpoint,
@@ -197,24 +197,25 @@ impl Client for HttpClient {
         &self,
         request: RegisterRequest,
     ) -> Result<UserIDResponse, Box<dyn std::error::Error>> {
-        self.exchange(request, ApiEndpoint::Register).await
+        self.send_request(request, ApiEndpoint::Register).await
     }
     async fn log_in(
         &self,
         request: LogInRequest,
     ) -> Result<TokenResponse, Box<dyn std::error::Error>> {
-        self.exchange(request, ApiEndpoint::LogIn).await
+        self.send_request(request, ApiEndpoint::LogIn).await
     }
     async fn change_first_name(
         &self,
         request: ChangeFirstNameRequest,
     ) -> Result<AcknowledgmentResponse, Box<dyn std::error::Error>> {
-        self.exchange(request, ApiEndpoint::ChangeFirstName).await
+        self.send_request(request, ApiEndpoint::ChangeFirstName)
+            .await
     }
     async fn delete_user(
         &self,
         request: DeleteUserRequest,
     ) -> Result<AcknowledgmentResponse, Box<dyn std::error::Error>> {
-        self.exchange(request, ApiEndpoint::DeleteUser).await
+        self.send_request(request, ApiEndpoint::DeleteUser).await
     }
 }
