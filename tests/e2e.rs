@@ -30,6 +30,7 @@ async fn test_http_integration() -> Result<(), Box<dyn std::error::Error>> {
                 let address = format!("{}://{}:{}", scheme, host, transport_config.port);
                 Box::new(HttpClient::new(address.clone())?)
             }
+            _ => panic!("not implemented"),
         };
 
         let test_cases: Vec<TestCase> = vec![

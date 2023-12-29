@@ -12,9 +12,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug)]
-enum AuthError {
+pub enum AuthError {
     IncorrectPassword,
     UserDoesNotOwnToken,
+    Unknown(Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl std::fmt::Display for AuthError {
@@ -25,6 +26,7 @@ impl std::fmt::Display for AuthError {
                 f,
                 "The user that owns the token attempts a privileged operation for a different user"
             ),
+            AuthError::Unknown(err) => write!(f, "Unknown error: {}", err),
         }
     }
 }
@@ -38,7 +40,7 @@ pub trait Application: Send + Sync {
         email: String,
         first_name: String,
         password: String,
-    ) -> Result<User, Box<dyn std::error::Error>>;
+    ) -> Result<User, AuthError>;
     async fn log_in(
         &self,
         email: String,
@@ -85,12 +87,18 @@ impl Application for App {
         email: String,
         first_name: String,
         password: String,
-    ) -> Result<User, Box<dyn std::error::Error>> {
+    ) -> Result<User, AuthError> {
         debug!("Registering user: {}", &email);
 
-        let password_hash = hash(password, DEFAULT_COST)?;
+        let password_hash = match hash(password, DEFAULT_COST) {
+            Ok(hash) => hash,
+            Err(err) => return Err(AuthError::Unknown(Box::new(err))),
+        };
         let user = User::new(email, first_name, password_hash);
-        let saved_user = self.repository.user_create(user).await?;
+        let saved_user = match self.repository.user_create(user).await {
+            Ok(user) => user,
+            Err(err) => return Err(AuthError::Unknown(Box::new(err))),
+        };
 
         info!("Registered user: {:?}", &saved_user.id);
 

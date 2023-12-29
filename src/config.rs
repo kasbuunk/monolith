@@ -13,6 +13,7 @@ pub struct Config {
 pub enum Transport {
     Tcp(crate::tcp::Config),
     Http(crate::http::Config),
+    Grpc(crate::grpc::Config),
 }
 
 pub fn load_config_from_file(file_path: &str) -> Result<Config, Box<dyn std::error::Error>> {

@@ -2,6 +2,7 @@ use log::info;
 use monolith::app;
 use monolith::config;
 use monolith::database;
+use monolith::grpc;
 use monolith::http;
 use monolith::repository;
 use monolith::tcp;
@@ -48,6 +49,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config::Transport::Http(http_config) => {
             let http_server = http::Server::new(app);
             http_server.listen(http_config.port).await
+        }
+        config::Transport::Grpc(config) => {
+            let grpc_server = grpc::GrpcServer::new(app);
+            grpc_server.listen(config.port).await
         }
     }
 }

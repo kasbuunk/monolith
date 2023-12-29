@@ -1,6 +1,7 @@
 pub mod app;
 pub mod config;
 pub mod database;
+pub mod grpc;
 pub mod http;
 pub mod model;
 pub mod repository;
