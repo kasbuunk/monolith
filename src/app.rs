@@ -41,11 +41,7 @@ pub trait Application: Send + Sync {
         first_name: String,
         password: String,
     ) -> Result<User, AuthError>;
-    async fn log_in(
-        &self,
-        email: String,
-        password: String,
-    ) -> Result<String, Box<dyn std::error::Error>>;
+    async fn log_in(&self, email: String, password: String) -> Result<String, AuthError>;
     async fn user_delete(
         &self,
         token: &str,
@@ -105,22 +101,31 @@ impl Application for App {
         Ok(saved_user)
     }
 
-    async fn log_in(
-        &self,
-        email: String,
-        password: String,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    async fn log_in(&self, email: String, password: String) -> Result<String, AuthError> {
         debug!("Logging in user: {:?}", &email);
 
-        let user = self.repository.user_get_by_email(&email).await?;
-        if !verify(&password, &user.password_hash)? {
+        let user = match self.repository.user_get_by_email(&email).await {
+            Ok(user) => user,
+            Err(err) => return Err(AuthError::Unknown(Box::new(err))),
+        };
+        let verified = match verify(&password, &user.password_hash) {
+            Ok(verified) => verified,
+            Err(err) => return Err(AuthError::Unknown(Box::new(err))),
+        };
+        if !verified {
             info!("Verification of password failed.");
 
-            return Err(Box::new(AuthError::IncorrectPassword));
+            return Err(AuthError::IncorrectPassword);
         };
 
-        let token = sign_jwt(&user, &self.signing_key)?;
-        self.verify_claims(&token)?;
+        let token = match sign_jwt(&user, &self.signing_key) {
+            Ok(token) => token,
+            Err(err) => return Err(AuthError::Unknown(Box::new(err))),
+        };
+        match self.verify_claims(&token) {
+            Ok(_) => (),
+            Err(err) => return Err(AuthError::Unknown(Box::new(err))),
+        };
 
         info!("Logged in user: {:?}", &user.id);
 

@@ -3,6 +3,9 @@ package auth;
 
 service Auth {
   rpc Register (RegisterRequest) returns (RegisterResponse);
+  rpc LogIn (LogInRequest) returns (LogInResponse);
+  rpc ChangeFirstName (ChangeFirstNameRequest) returns (ChangeFirstNameResponse);
+  rpc DeleteUser (DeleteUserRequest) returns (DeleteUserResponse);
 }
 
 message RegisterRequest {
@@ -11,4 +14,29 @@ message RegisterRequest {
   string first_name = 3;
 }
 
-message RegisterResponse {}
+message RegisterResponse {
+  string user_id = 1;
+}
+
+message LogInRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message LogInResponse {
+  string token = 1;
+}
+
+message ChangeFirstNameRequest {
+  string token = 1;
+  string first_name = 2;
+}
+
+message ChangeFirstNameResponse {}
+
+message DeleteUserRequest {
+  string token = 1;
+  string user_id = 2;
+}
+
+message DeleteUserResponse {}

@@ -11,6 +11,7 @@ test: build
 run: build
 	./${BINARY_NAME} tests/tcp.ron &
 	./${BINARY_NAME} tests/http.ron &
+	./${BINARY_NAME} tests/grpc.ron &
 
 .PHONY: stop
 stop:
